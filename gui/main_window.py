@@ -1,11 +1,71 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QPushButton,
-                           QLabel, QInputDialog, QMessageBox, QTableWidget,
-                           QTableWidgetItem, QHeaderView, QHBoxLayout, QStyle,
-                           QStyleFactory)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QFont
+                           QLabel, QInputDialog, QMessageBox, QHBoxLayout,
+                           QScrollArea, QFrame, QGridLayout, QSizePolicy)
+from PyQt5.QtCore import Qt, QTimer, QSize
+from PyQt5.QtGui import QFont, QIcon, QColor
 import os
 from datetime import datetime
+
+class ProjectCard(QFrame):
+    def __init__(self, project, on_delete):
+        super().__init__()
+        self.project = project  # Now this is a dictionary
+        self.on_delete = on_delete
+        self.init_ui()
+        
+    def init_ui(self):
+        self.setObjectName("projectCard")
+        self.setFixedSize(300, 200)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+        
+        # Project name
+        name_label = QLabel(self.project['name'])
+        name_label.setObjectName("projectName")
+        name_label.setFont(QFont("Arial", 14, QFont.Bold))
+        layout.addWidget(name_label)
+        
+        # Project info
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(5)
+        
+        # Created date
+        created_date = datetime.fromisoformat(self.project['created_at'])
+        created_label = QLabel(f"Created: {created_date.strftime('%Y-%m-%d %H:%M')}")
+        created_label.setObjectName("projectInfo")
+        
+        # Modified date
+        modified_date = datetime.fromisoformat(self.project['modified_at'])
+        modified_label = QLabel(f"Modified: {modified_date.strftime('%Y-%m-%d %H:%M')}")
+        modified_label.setObjectName("projectInfo")
+        
+        # File count
+        file_count = self.project.get('file_count', 0)
+        files_label = QLabel(f"Files: {file_count}")
+        files_label.setObjectName("projectInfo")
+        
+        info_layout.addWidget(created_label)
+        info_layout.addWidget(modified_label)
+        info_layout.addWidget(files_label)
+        layout.addLayout(info_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        open_btn = QPushButton("Open Project")
+        open_btn.setObjectName("openButton")
+        
+        delete_btn = QPushButton("Delete")
+        delete_btn.setObjectName("deleteButton")
+        delete_btn.clicked.connect(lambda: self.on_delete(self.project['id']))
+        
+        button_layout.addWidget(open_btn)
+        button_layout.addWidget(delete_btn)
+        
+        layout.addStretch()
+        layout.addLayout(button_layout)
 
 class MainWindow(QMainWindow):
     def __init__(self, db_manager):
@@ -23,59 +83,55 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("Text Video Editor")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1000, 700)
         
         # Create central widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
         
-        # Header
-        header = QLabel("Text Video Editor")
-        header.setFont(QFont("Arial", 24, QFont.Bold))
-        header.setAlignment(Qt.AlignCenter)
-        layout.addWidget(header)
+        # Header section
+        header_widget = QWidget()
+        header_widget.setObjectName("headerWidget")
+        header_layout = QHBoxLayout(header_widget)
         
-        # Add some spacing
-        layout.addSpacing(20)
-        
-        # Buttons layout
-        button_layout = QHBoxLayout()
+        # Title
+        title_label = QLabel("Text Video Editor")
+        title_label.setObjectName("appTitle")
+        title_label.setFont(QFont("Arial", 24, QFont.Bold))
+        header_layout.addWidget(title_label)
         
         # Create New Project button
-        new_project_btn = QPushButton("Create New Project")
-        new_project_btn.setMinimumHeight(40)
+        new_project_btn = QPushButton("New Project")
+        new_project_btn.setObjectName("newProjectButton")
+        new_project_btn.setMinimumSize(150, 40)
         new_project_btn.setFont(QFont("Arial", 12))
         new_project_btn.clicked.connect(self.create_new_project)
-        button_layout.addWidget(new_project_btn)
+        header_layout.addWidget(new_project_btn, alignment=Qt.AlignRight)
         
-        # Add stretch to push button to the left
-        button_layout.addStretch()
+        main_layout.addWidget(header_widget)
         
-        layout.addLayout(button_layout)
-        layout.addSpacing(20)
+        # Projects section title
+        projects_title = QLabel("Your Projects")
+        projects_title.setObjectName("sectionTitle")
+        projects_title.setFont(QFont("Arial", 18))
+        main_layout.addWidget(projects_title)
         
-        # Projects table
-        self.projects_table = QTableWidget()
-        self.projects_table.setColumnCount(4)
-        self.projects_table.setHorizontalHeaderLabels([
-            "Project Name", "Created", "Last Modified", "Actions"
-        ])
+        # Create scroll area for projects
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setObjectName("projectsScrollArea")
         
-        # Set header font
-        header_font = QFont("Arial", 10, QFont.Bold)
-        self.projects_table.horizontalHeader().setFont(header_font)
+        # Container for project cards
+        self.projects_container = QWidget()
+        self.projects_layout = QGridLayout(self.projects_container)
+        self.projects_layout.setSpacing(20)
+        self.projects_layout.setContentsMargins(10, 10, 10, 10)
         
-        # Set column stretching
-        self.projects_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.projects_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.projects_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.projects_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        
-        # Set alternating row colors
-        self.projects_table.setAlternatingRowColors(True)
-        
-        layout.addWidget(self.projects_table)
+        scroll_area.setWidget(self.projects_container)
+        main_layout.addWidget(scroll_area)
         
         # Load projects
         self.load_projects()
@@ -118,38 +174,38 @@ class MainWindow(QMainWindow):
                 )
 
     def load_projects(self):
+        # Clear existing projects
+        while self.projects_layout.count():
+            child = self.projects_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+                
         projects = self.db_manager.get_all_projects()
-        self.projects_table.setRowCount(len(projects))
         
-        for row, project in enumerate(projects):
-            # Project Name
-            name_item = QTableWidgetItem(project['name'])
-            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
-            self.projects_table.setItem(row, 0, name_item)
+        if not projects:  # If no projects, show a message
+            no_projects_label = QLabel("No projects yet. Click 'New Project' to create one!")
+            no_projects_label.setObjectName("noProjectsLabel")
+            no_projects_label.setAlignment(Qt.AlignCenter)
+            self.projects_layout.addWidget(no_projects_label, 0, 0)
+            return
+        
+        # Add project cards to grid
+        row = 0
+        col = 0
+        max_cols = 3  # Number of cards per row
+        
+        for project in projects:
+            card = ProjectCard(project, self.delete_project)
+            self.projects_layout.addWidget(card, row, col)
             
-            # Created Date
-            created_date = datetime.fromisoformat(project['created_at'])
-            created_item = QTableWidgetItem(
-                created_date.strftime("%Y-%m-%d %H:%M")
-            )
-            created_item.setFlags(created_item.flags() & ~Qt.ItemIsEditable)
-            self.projects_table.setItem(row, 1, created_item)
-            
-            # Modified Date
-            modified_date = datetime.fromisoformat(project['modified_at'])
-            modified_item = QTableWidgetItem(
-                modified_date.strftime("%Y-%m-%d %H:%M")
-            )
-            modified_item.setFlags(modified_item.flags() & ~Qt.ItemIsEditable)
-            self.projects_table.setItem(row, 2, modified_item)
-            
-            # Delete Button
-            delete_btn = QPushButton("Delete")
-            delete_btn.setObjectName("deleteButton")  # For specific styling
-            delete_btn.clicked.connect(
-                lambda checked, pid=project['id']: self.delete_project(pid)
-            )
-            self.projects_table.setCellWidget(row, 3, delete_btn)
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+                
+        # Add stretch to fill empty space
+        if projects:
+            self.projects_layout.setRowStretch(row + 1, 1)
 
     def delete_project(self, project_id):
         project = self.db_manager.get_project_by_id(project_id)
@@ -173,7 +229,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(
                     self,
                     "Success",
-                    f"Project '{project['name']}' deleted successfully!"
+                    message
                 )
             else:
                 QMessageBox.warning(
