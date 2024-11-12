@@ -33,46 +33,24 @@ class DatabaseManager:
                     settings TEXT DEFAULT '{}'
                 )
             ''')
-            
-            # Create project_files table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS project_files (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project_id INTEGER NOT NULL,
-                    file_name TEXT NOT NULL,
-                    file_path TEXT NOT NULL,
-                    file_type TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    metadata TEXT DEFAULT '{}',
-                    FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
-                )
-            ''')
-            
             conn.commit()
 
     def create_project(self, name, settings=None):
-        """
-        Create a new project.
-        
-        Args:
-            name (str): Project name
-            settings (dict, optional): Project settings
-            
-        Returns:
-            tuple: (success (bool), message (str), project_id (int))
-        """
+        """Create a new project with its own database."""
         project_path = f"projects/{name}"
         if settings is None:
             settings = {}
             
         try:
-            os.makedirs(project_path, exist_ok=True)
-            
             # Create project directory structure
+            os.makedirs(project_path, exist_ok=True)
             os.makedirs(os.path.join(project_path, "sources"), exist_ok=True)
             os.makedirs(os.path.join(project_path, "output"), exist_ok=True)
             os.makedirs(os.path.join(project_path, "temp"), exist_ok=True)
+            
+            # Create project-specific database
+            from database.project_db import ProjectDatabase
+            project_db = ProjectDatabase(project_path)
             
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
@@ -81,13 +59,16 @@ class DatabaseManager:
                         INSERT INTO projects (name, project_path, settings)
                         VALUES (?, ?, ?)
                     ''', (name, project_path, json.dumps(settings)))
+                    
+                    project_id = cursor.lastrowid
                     conn.commit()
-                    return True, "Project created successfully", cursor.lastrowid
+                    return True, "Project created successfully", project_id
+                    
                 except sqlite3.IntegrityError:
                     # Clean up created directories if database insert fails
                     shutil.rmtree(project_path, ignore_errors=True)
                     return False, "A project with this name already exists", None
-                
+                    
         except Exception as e:
             # Clean up if anything goes wrong
             shutil.rmtree(project_path, ignore_errors=True)
@@ -98,15 +79,7 @@ class DatabaseManager:
         with sqlite3.connect(self.db_file) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    p.*,
-                    COUNT(pf.id) as file_count
-                FROM projects p
-                LEFT JOIN project_files pf ON p.id = pf.project_id
-                GROUP BY p.id
-                ORDER BY p.modified_at DESC
-            ''')
+            cursor.execute('SELECT * FROM projects ORDER BY modified_at DESC')
             rows = cursor.fetchall()
             return [self._row_to_dict(row) for row in rows]
 
@@ -115,15 +88,7 @@ class DatabaseManager:
         with sqlite3.connect(self.db_file) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    p.*,
-                    COUNT(pf.id) as file_count
-                FROM projects p
-                LEFT JOIN project_files pf ON p.id = pf.project_id
-                WHERE p.id = ?
-                GROUP BY p.id
-            ''', (project_id,))
+            cursor.execute('SELECT * FROM projects WHERE id = ?', (project_id,))
             row = cursor.fetchone()
             return self._row_to_dict(row)
 
@@ -132,23 +97,30 @@ class DatabaseManager:
         with sqlite3.connect(self.db_file) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    p.*,
-                    COUNT(pf.id) as file_count
-                FROM projects p
-                LEFT JOIN project_files pf ON p.id = pf.project_id
-                WHERE p.name = ?
-                GROUP BY p.id
-            ''', (name,))
+            cursor.execute('SELECT * FROM projects WHERE name = ?', (name,))
             row = cursor.fetchone()
             return self._row_to_dict(row)
 
-    def rename_project(self, project_id, new_name, new_path):
-        """Rename a project and update its path."""
+    def rename_project(self, project_id, new_name):
+        """Rename a project."""
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.cursor()
             try:
+                # Get current project info
+                cursor.execute('SELECT project_path FROM projects WHERE id = ?', (project_id,))
+                project = cursor.fetchone()
+                
+                if not project:
+                    return False, "Project not found"
+                
+                old_path = project[0]
+                new_path = f"projects/{new_name}"
+                
+                # Rename directory
+                if os.path.exists(old_path):
+                    os.rename(old_path, new_path)
+                
+                # Update database
                 cursor.execute('''
                     UPDATE projects
                     SET name = ?, 
@@ -157,14 +129,20 @@ class DatabaseManager:
                     WHERE id = ?
                 ''', (new_name, new_path, project_id))
                 conn.commit()
+                
                 return True, "Project renamed successfully"
+                
             except sqlite3.IntegrityError:
+                # Rollback directory rename if database update fails
+                if os.path.exists(new_path):
+                    os.rename(new_path, old_path)
                 return False, "A project with this name already exists"
+                
             except Exception as e:
                 return False, f"Error renaming project: {str(e)}"
 
     def delete_project(self, project_id):
-        """Delete a project and all its associated files."""
+        """Delete a project and its database."""
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.cursor()
             try:
@@ -175,11 +153,11 @@ class DatabaseManager:
                 if not project:
                     return False, "Project not found"
                 
-                # Delete from database (cascade will handle project_files)
+                # Delete from main database
                 cursor.execute('DELETE FROM projects WHERE id = ?', (project_id,))
                 conn.commit()
                 
-                # Delete project directory and all contents
+                # Delete project directory (including its database)
                 project_path = project[1]
                 if os.path.exists(project_path):
                     shutil.rmtree(project_path, ignore_errors=True)
@@ -187,86 +165,6 @@ class DatabaseManager:
                 return True, f"Project '{project[0]}' deleted successfully"
             except Exception as e:
                 return False, f"Error deleting project: {str(e)}"
-
-    def add_file_to_project(self, project_id, file_name, file_type, metadata=None):
-        """
-        Add a file to a project.
-        
-        Args:
-            project_id (int): Project ID
-            file_name (str): Name of the file
-            file_type (str): Type of file (video, audio, image, etc.)
-            metadata (dict, optional): Additional file metadata
-            
-        Returns:
-            tuple: (success (bool), message (str), file_id (int))
-        """
-        if metadata is None:
-            metadata = {}
-            
-        with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.cursor()
-            try:
-                # Get project path
-                cursor.execute('SELECT project_path FROM projects WHERE id = ?', (project_id,))
-                project = cursor.fetchone()
-                
-                if not project:
-                    return False, "Project not found", None
-                
-                # Construct file path
-                file_path = os.path.join(project[0], "sources", file_name)
-                
-                # Add file to database
-                cursor.execute('''
-                    INSERT INTO project_files 
-                    (project_id, file_name, file_path, file_type, metadata)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (project_id, file_name, file_path, file_type, json.dumps(metadata)))
-                
-                # Update project modified time
-                cursor.execute('''
-                    UPDATE projects
-                    SET modified_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (project_id,))
-                
-                conn.commit()
-                return True, "File added successfully", cursor.lastrowid
-                
-            except Exception as e:
-                return False, f"Error adding file: {str(e)}", None
-
-    def get_project_files(self, project_id):
-        """Get all files in a project."""
-        with sqlite3.connect(self.db_file) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM project_files
-                WHERE project_id = ?
-                ORDER BY created_at DESC
-            ''', (project_id,))
-            rows = cursor.fetchall()
-            return [self._row_to_dict(row) for row in rows]
-
-    def get_project_statistics(self, project_id):
-        """Get project statistics."""
-        with sqlite3.connect(self.db_file) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    COUNT(*) as total_files,
-                    SUM(CASE WHEN file_type = 'video' THEN 1 ELSE 0 END) as video_files,
-                    SUM(CASE WHEN file_type = 'audio' THEN 1 ELSE 0 END) as audio_files,
-                    SUM(CASE WHEN file_type = 'image' THEN 1 ELSE 0 END) as image_files,
-                    MIN(created_at) as oldest_file,
-                    MAX(modified_at) as newest_file
-                FROM project_files
-                WHERE project_id = ?
-            ''', (project_id,))
-            return self._row_to_dict(cursor.fetchone())
 
     def update_project_settings(self, project_id, settings):
         """Update project settings."""

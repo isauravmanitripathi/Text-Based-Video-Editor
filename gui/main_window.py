@@ -1,15 +1,15 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QPushButton,
                            QLabel, QInputDialog, QMessageBox, QHBoxLayout,
-                           QScrollArea, QFrame, QGridLayout, QSizePolicy)
-from PyQt5.QtCore import Qt, QTimer, QSize
-from PyQt5.QtGui import QFont, QIcon, QColor
+                           QGridLayout)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QFont
 import os
 from datetime import datetime
 
-class ProjectCard(QFrame):
+class ProjectCard(QWidget):
     def __init__(self, project, on_delete):
         super().__init__()
-        self.project = project  # Now this is a dictionary
+        self.project = project
         self.on_delete = on_delete
         self.init_ui()
         
@@ -41,14 +41,8 @@ class ProjectCard(QFrame):
         modified_label = QLabel(f"Modified: {modified_date.strftime('%Y-%m-%d %H:%M')}")
         modified_label.setObjectName("projectInfo")
         
-        # File count
-        file_count = self.project.get('file_count', 0)
-        files_label = QLabel(f"Files: {file_count}")
-        files_label.setObjectName("projectInfo")
-        
         info_layout.addWidget(created_label)
         info_layout.addWidget(modified_label)
-        info_layout.addWidget(files_label)
         layout.addLayout(info_layout)
         
         # Buttons
@@ -56,6 +50,7 @@ class ProjectCard(QFrame):
         
         open_btn = QPushButton("Open Project")
         open_btn.setObjectName("openButton")
+        open_btn.clicked.connect(self.open_project)
         
         delete_btn = QPushButton("Delete")
         delete_btn.setObjectName("deleteButton")
@@ -66,6 +61,11 @@ class ProjectCard(QFrame):
         
         layout.addStretch()
         layout.addLayout(button_layout)
+
+    def open_project(self):
+        from windows.project.project_window import ProjectWindow
+        self.project_window = ProjectWindow(self.project)
+        self.project_window.show()
 
 class MainWindow(QMainWindow):
     def __init__(self, db_manager):
@@ -85,14 +85,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Text Video Editor")
         self.setMinimumSize(1000, 700)
         
-        # Create central widget and layout
+        # Create central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
         
-        # Header section
+        # Create header
         header_widget = QWidget()
         header_widget.setObjectName("headerWidget")
         header_layout = QHBoxLayout(header_widget)
@@ -119,19 +119,11 @@ class MainWindow(QMainWindow):
         projects_title.setFont(QFont("Arial", 18))
         main_layout.addWidget(projects_title)
         
-        # Create scroll area for projects
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setObjectName("projectsScrollArea")
-        
-        # Container for project cards
+        # Create grid layout for project cards
         self.projects_container = QWidget()
         self.projects_layout = QGridLayout(self.projects_container)
         self.projects_layout.setSpacing(20)
-        self.projects_layout.setContentsMargins(10, 10, 10, 10)
-        
-        scroll_area.setWidget(self.projects_container)
-        main_layout.addWidget(scroll_area)
+        main_layout.addWidget(self.projects_container)
         
         # Load projects
         self.load_projects()
